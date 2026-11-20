@@ -16,22 +16,27 @@ module RedmineMcp
       value.to_s.strip.casecmp('none').zero?
     end
 
-    # Accepts a status name or id. An unknown status gets the same answer as a
-    # disallowed one: the statuses this user may set on this issue.
+    # Accepts a status name or id. An unknown status says so, apart from one the
+    # workflow forbids, so a typo is not mistaken for a restriction; both list
+    # the statuses this user may set on this issue.
     def status_id_for(issue, value)
-      status = if value.to_s.match?(/\A\d+\z/)
-                 IssueStatus.find_by(id: value.to_i)
-               else
-                 IssueStatus.find_by(name: value.to_s)
-               end
-      raise ToolError, status_refusal(issue, value.to_s) if status.nil?
+      numeric = value.to_s.match?(/\A\d+\z/)
+      status = numeric ? IssueStatus.find_by(id: value.to_i) : IssueStatus.find_by(name: value.to_s)
+      if status.nil?
+        raise ToolError, "Status #{numeric ? value : value.to_s.inspect} does not exist; " \
+                         "allowed: #{allowed_status_names(issue)}"
+      end
 
       status.id
     end
 
-    def status_refusal(issue, label)
-      allowed = issue.new_statuses_allowed_to(user).map(&:name)
-      "Status #{label.inspect} is not allowed for this issue; allowed: #{allowed.join(', ')}"
+    def status_refusal(issue, name)
+      "Status #{name.inspect} is not allowed for this issue by the workflow; " \
+        "allowed: #{allowed_status_names(issue)}"
+    end
+
+    def allowed_status_names(issue)
+      issue.new_statuses_allowed_to(user).map(&:name).join(', ')
     end
 
     # Accepts a login, name or numeric user or group id.

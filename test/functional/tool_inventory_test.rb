@@ -539,7 +539,9 @@ class RedmineMcpToolInventoryTest < ActiveSupport::TestCase
     result = update_issue_as(User.find(2), 'status' => 'Closed')
 
     assert result[:isError]
-    assert_match(/"Closed" is not allowed.*allowed: .*Assigned/, result[:content].first[:text])
+    message = result[:content].first[:text]
+    assert_match(/"Closed" is not allowed.*workflow.*allowed: .*Assigned/, message)
+    assert_no_match(/does not exist/, message)
     assert_not_equal 'Closed', Issue.find(1).status.name
   end
 
@@ -547,7 +549,12 @@ class RedmineMcpToolInventoryTest < ActiveSupport::TestCase
     result = update_issue_as(User.find(2), 'status' => 'Doing')
 
     assert result[:isError]
-    assert_match(/"Doing".*allowed: .*Assigned/, result[:content].first[:text])
+    message = result[:content].first[:text]
+    assert_match(/"Doing" does not exist.*allowed: .*Assigned/, message)
+    assert_no_match(/not allowed/, message)
+
+    result = update_issue_as(User.find(2), 'status' => 999_999)
+    assert_match(/999999 does not exist.*allowed: .*Assigned/, result[:content].first[:text])
   end
 
   def test_update_issue_refuses_a_field_the_workflow_makes_read_only
