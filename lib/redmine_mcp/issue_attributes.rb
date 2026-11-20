@@ -10,20 +10,37 @@ module RedmineMcp
   #
   # "none" clears an optional field, the convention assigned_to already uses.
   module IssueAttributes
-    # Fields safe_attributes= may drop without a word. See ensure_applied!.
-    CHECKED_ATTRIBUTES = %w[status_id category_id fixed_version_id parent_issue_id].freeze
-
     private
 
     def none?(value)
       value.to_s.strip.casecmp('none').zero?
     end
 
-    def status_id_for(issue, name)
-      status = IssueStatus.find_by(name: name.to_s)
-      raise ToolError, "Project #{issue.project.identifier} has no status named #{name.to_s.inspect}" if status.nil?
+    # Accepts a status name or id. An unknown status gets the same answer as a
+    # disallowed one: the statuses this user may set on this issue.
+    def status_id_for(issue, value)
+      status = if value.to_s.match?(/\A\d+\z/)
+                 IssueStatus.find_by(id: value.to_i)
+               else
+                 IssueStatus.find_by(name: value.to_s)
+               end
+      raise ToolError, status_refusal(issue, value.to_s) if status.nil?
 
       status.id
+    end
+
+    def status_refusal(issue, label)
+      allowed = issue.new_statuses_allowed_to(user).map(&:name)
+      "Status #{label.inspect} is not allowed for this issue; allowed: #{allowed.join(', ')}"
+    end
+
+    # Accepts a login, name or numeric user or group id.
+    def assignee_for(project, value)
+      if value.to_s.match?(/\A\d+\z/)
+        project.assignable_users.detect { |principal| principal.id == value.to_i }
+      else
+        find_assignable(project, value.to_s)
+      end
     end
 
     def category_id_for(issue, name)
@@ -66,14 +83,21 @@ module RedmineMcp
 
     # safe_attributes= filters by permission and by workflow -- read-only
     # fields, disallowed status transitions -- and drops what it filters
-    # silently. Without this check a status that did not stick comes back as
+    # silently. Without this check a value that did not stick comes back as
     # success, which is the plausible-answer-to-another-question failure
-    # SchemaValidator exists to prevent.
+    # SchemaValidator exists to prevent. Comparing the stored value with the
+    # requested one also covers settings that override a field, such as
+    # done ratio derived from the status.
     def ensure_applied!(issue, attributes)
-      ignored = attributes.slice(*CHECKED_ATTRIBUTES).reject { |key, value| issue.public_send(key) == value }.keys
+      ignored = attributes.reject { |key, value| issue.public_send(key) == value }.keys
       return if ignored.empty?
 
-      raise ToolError, "Not allowed to set #{ignored.join(', ')} on this issue"
+      if ignored.include?('status_id')
+        raise ToolError, status_refusal(issue, IssueStatus.find(attributes['status_id']).name)
+      end
+
+      fields = ignored.map { |key| key.delete_suffix('_id') }
+      raise ToolError, "Not allowed to change #{fields.join(', ')} on this issue"
     end
   end
 end

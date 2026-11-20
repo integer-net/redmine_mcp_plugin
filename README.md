@@ -152,7 +152,7 @@ token scopes; tools denied by the user's role remain hidden.
 | Users | `list_users` | Filtered by Redmine principal visibility |
 | Issue custom fields | `list_issue_custom_fields` | `add_issues` |
 | Create an issue | `create_issue` (optional `custom_fields`, by id or name; see `list_issue_custom_fields`) | `add_issues`; read-only mode must be disabled |
-| Update an issue | `update_issue` | `edit_issues`; private notes also require `set_notes_private`; read-only mode must be disabled |
+| Update an issue | `update_issue` (optional `custom_fields`, by id or name; status and assignee by name or id; an optional `notes` lands in the same journal entry) | `edit_issues`; private notes also require `set_notes_private`; read-only mode must be disabled. A status or field the workflow or role does not allow is refused with an error (for status, listing the allowed statuses) |
 | Issue relations | `add_issue_relation` | `manage_issue_relations`; read-only mode must be disabled |
 | Add an issue note | `add_issue_note` | `add_issue_notes`; private notes also require `set_notes_private`; read-only mode must be disabled |
 | Time entries | `list_time_entries` | `view_time_entries`; includes filtered `total_hours` |

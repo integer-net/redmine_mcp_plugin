@@ -12,7 +12,7 @@ class RedmineMcpToolInventoryTest < ActiveSupport::TestCase
            :groups_users, :issues, :issue_statuses, :trackers, :enumerations,
            :enabled_modules, :journals, :journal_details, :versions, :wikis,
            :wiki_pages, :wiki_contents, :custom_fields, :custom_fields_projects,
-           :custom_fields_trackers, :custom_values
+           :custom_fields_trackers, :custom_values, :workflows, :projects_trackers
 
   def setup
     Setting.plugin_redmine_mcp = RedmineMcp::Settings::DEFAULTS.merge('read_only' => '1')
@@ -411,7 +411,91 @@ class RedmineMcpToolInventoryTest < ActiveSupport::TestCase
     assert_not result[:isError], result[:content]&.first&.dig(:text)
   end
 
+  # --- update_issue ---------------------------------------------------------
+
+  def test_update_issue_sets_a_custom_field_by_name_and_by_id
+    result = update_issue_as(User.find(2), 'custom_fields' => [{ 'name' => 'Database', 'value' => 'Oracle' }])
+
+    assert_not result[:isError], result[:content]&.first&.dig(:text)
+    assert_equal 'Oracle', Issue.find(1).custom_field_value(CustomField.find(1))
+    assert_equal 'Oracle', result[:structuredContent][:custom_fields].find { |f| f[:id] == 1 }[:value]
+
+    result = update_issue_as(User.find(2), 'custom_fields' => [{ 'id' => 1, 'value' => 'MySQL' }])
+
+    assert_not result[:isError], result[:content]&.first&.dig(:text)
+    assert_equal 'MySQL', Issue.find(1).custom_field_value(CustomField.find(1))
+  end
+
+  def test_update_issue_rejects_a_custom_field_hidden_from_the_role
+    hidden = manager_only_issue_field
+
+    result = update_issue_as(User.find(3), 'custom_fields' => [{ 'id' => hidden.id, 'value' => 'x' }])
+
+    assert result[:isError]
+    assert_nil Issue.find(1).custom_field_value(hidden).presence
+  end
+
+  def test_update_issue_writes_the_change_and_the_note_to_one_journal
+    assert_difference 'Journal.count', 1 do
+      result = update_issue_as(User.find(2), 'subject' => 'Renamed by MCP', 'notes' => 'Renamed on request')
+
+      assert_not result[:isError], result[:content]&.first&.dig(:text)
+    end
+
+    journal = Issue.find(1).journals.order(:id).last
+    assert_equal 'Renamed on request', journal.notes
+    assert_includes journal.details.map(&:prop_key), 'subject'
+  end
+
+  def test_update_issue_lists_the_allowed_statuses_when_the_workflow_refuses_one
+    WorkflowTransition.where(role_id: 1, new_status_id: IssueStatus.find_by(name: 'Closed').id).delete_all
+
+    result = update_issue_as(User.find(2), 'status' => 'Closed')
+
+    assert result[:isError]
+    assert_match(/"Closed" is not allowed.*allowed: .*Assigned/, result[:content].first[:text])
+    assert_not_equal 'Closed', Issue.find(1).status.name
+  end
+
+  def test_update_issue_lists_the_allowed_statuses_for_an_unknown_status
+    result = update_issue_as(User.find(2), 'status' => 'Doing')
+
+    assert result[:isError]
+    assert_match(/"Doing".*allowed: .*Assigned/, result[:content].first[:text])
+  end
+
+  def test_update_issue_refuses_a_field_the_workflow_makes_read_only
+    WorkflowPermission.create!(tracker_id: 1, role_id: 1, old_status_id: 1, field_name: 'priority_id',
+                               rule: 'readonly')
+    before = Issue.find(1).priority_id
+
+    result = update_issue_as(User.find(2), 'priority' => 'Urgent')
+
+    assert result[:isError]
+    assert_match(/priority/, result[:content].first[:text])
+    assert_equal before, Issue.find(1).priority_id
+  end
+
+  def test_update_issue_accepts_numeric_ids_for_status_and_assignee
+    assignee = Issue.find(1).project.assignable_users.detect { |u| u.id != Issue.find(1).assigned_to_id }
+
+    result = update_issue_as(User.find(2), 'status' => IssueStatus.find_by(name: 'Assigned').id,
+                                           'assigned_to' => assignee.id)
+
+    assert_not result[:isError], result[:content]&.first&.dig(:text)
+    issue = Issue.find(1)
+    assert_equal 'Assigned', issue.status.name
+    assert_equal assignee.id, issue.assigned_to_id
+  end
+
   private
+
+  def update_issue_as(user, arguments)
+    User.current = user
+    with_read_only_off { call_as(user, 'update_issue', { 'id' => 1 }.merge(arguments))[:result] }
+  ensure
+    User.current = nil
+  end
 
   def create_issue_as(user, custom_fields: nil)
     arguments = { 'project' => 'ecookbook', 'tracker' => 'Bug', 'subject' => 'MCP custom fields' }
