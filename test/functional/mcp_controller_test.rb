@@ -423,6 +423,42 @@ class McpControllerTest < Redmine::ControllerTest
     )
   end
 
+  # list_issue_custom_fields only reads field metadata, so a read token must be
+  # enough. Declaring the write-tier add_issues scope made the read step-up
+  # challenge raise (HTTP 500) instead of answering.
+  def test_list_issue_custom_fields_needs_only_read_scopes
+    oauth = oauth_headers(User.find(2), scopes: 'view_issues view_project')
+
+    post_mcp rpc('tools/call', { 'name' => 'list_issue_custom_fields',
+                                 'arguments' => { 'project' => 'ecookbook' } }), oauth
+
+    assert_response :success
+    assert_not json_body.dig('result', 'isError'), json_body.dig('result', 'content')&.first&.dig('text')
+    assert_kind_of Array, json_body.dig('result', 'structuredContent', 'custom_fields')
+  end
+
+  def test_list_issue_custom_fields_challenge_stays_in_the_read_tier
+    oauth = oauth_headers(User.find(2), scopes: 'view_wiki_pages')
+
+    post_mcp rpc('tools/call', { 'name' => 'list_issue_custom_fields',
+                                 'arguments' => { 'project' => 'ecookbook' } }), oauth
+
+    assert_response :forbidden
+    challenge = response.headers['WWW-Authenticate']
+    assert_match(/scope="view_issues view_project"/, challenge)
+    assert_no_match(/add_issues/, challenge)
+  end
+
+  def test_list_issue_custom_fields_stays_hidden_from_roles_without_add_issues
+    # Discovery looks at every role of the user, so take the permission from all.
+    Role.all.each { |role| role.remove_permission!(:add_issues) }
+
+    post_mcp rpc('tools/list'), api_key_headers(User.find(2))
+
+    assert_includes json_body['result']['tools'].pluck('name'), 'list_projects'
+    assert_not_includes json_body['result']['tools'].pluck('name'), 'list_issue_custom_fields'
+  end
+
   def test_issue_creation_challenge_includes_all_same_tier_correlated_scopes
     enable_mcp('read_only' => '0')
     oauth = oauth_headers(User.find(2), scopes: 'view_issues')
