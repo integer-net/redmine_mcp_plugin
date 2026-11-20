@@ -165,6 +165,12 @@ Issue creation and updates accept status, category, target version, and parent i
 Setting a parent also requires `manage_subtasks`. Redmine's workflow and safe
 attributes still decide which changes are allowed.
 
+`update_issue` returns `status` and `assigned_to` in the same shapes as `get_issue`.
+The journals of `get_issue` name the records behind status, priority, tracker,
+category, target version, and assignee changes, and a custom field change carries
+the field's `field` name plus `old_label`/`new_label` where the stored value differs
+from what Redmine displays (for example an enumeration's id).
+
 `search_issues` accepts native Redmine filters through `filters`, including named
 assignees/authors, status, dates, custom fields, and native numeric IDs. Conditions
 are combined with AND. It searches all statuses by default; use `status: "open"`

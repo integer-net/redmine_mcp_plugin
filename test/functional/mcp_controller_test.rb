@@ -255,9 +255,9 @@ class McpControllerTest < Redmine::ControllerTest
 
     assert_response :success
     assert_equal 'Updated issue title', json_body['result']['structuredContent']['subject']
-    assert_equal 'Closed', json_body['result']['structuredContent']['status']
+    assert_equal 'Closed', json_body['result']['structuredContent']['status']['name']
     assert_equal 100, json_body['result']['structuredContent']['done_ratio']
-    assert_equal assignee.login, User.find(json_body['result']['structuredContent']['assigned_to_id']).login
+    assert_equal assignee.login, User.find(json_body['result']['structuredContent']['assigned_to']['id']).login
   end
 
   # --- assignment ---------------------------------------------------------
@@ -276,7 +276,7 @@ class McpControllerTest < Redmine::ControllerTest
              api_key_headers(User.find(1))
 
     assert_response :success
-    assert_equal 11, json_body['result']['structuredContent']['assigned_to_id']
+    assert_equal 11, json_body['result']['structuredContent']['assigned_to']['id']
     assert_equal 11, Issue.find(4).assigned_to_id
   end
 

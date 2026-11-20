@@ -99,14 +99,6 @@ module RedmineMcp
         payload
       end
 
-      # The current status carries is_closed so a model can tell a closing
-      # status apart without a second catalog lookup.
-      def status_ref(status)
-        return nil if status.nil?
-
-        { id: status.id, name: status.name, is_closed: status.is_closed? }
-      end
-
       # Issue#visible_custom_field_values applies per-field role visibility.
       # Reading custom_field_values directly would leak fields core hides.
       def visible_custom_fields(issue)
@@ -130,25 +122,63 @@ module RedmineMcp
         end
       end
 
-      # Resolve status and assignee transitions to typed values so a model can
-      # reconstruct ownership and status history without re-resolving numeric
-      # ids; every other detail keeps its raw before/after string.
+      # The record an attribute change points at by id, resolved so a model can
+      # reconstruct the history without a second lookup per id. Looked up on
+      # use: the models are not loadable while the plugin boots.
+      def referenced_class(attribute)
+        case attribute
+        when 'status_id' then IssueStatus
+        when 'priority_id' then IssuePriority
+        when 'tracker_id' then Tracker
+        when 'category_id' then IssueCategory
+        when 'fixed_version_id' then Version
+        end
+      end
+
+      # Resolves record references to {id, name} and an assignee to a typed
+      # identity; a custom field change gains the field's name and, where the
+      # stored value is not what a person reads, the label. Everything else
+      # keeps its raw before/after string.
       def detail_json(detail)
         base = { property: detail.property, name: detail.prop_key }
-        if detail.property == 'attr' && detail.prop_key == 'status_id'
-          base.merge(old_value: status_by_id(detail.old_value), new_value: status_by_id(detail.value))
+        klass = referenced_class(detail.prop_key) if detail.property == 'attr'
+        if klass
+          base.merge(old_value: record_ref(klass, detail.old_value), new_value: record_ref(klass, detail.value))
         elsif detail.property == 'attr' && detail.prop_key == 'assigned_to_id'
           base.merge(old_value: principal_by_id(detail.old_value), new_value: principal_by_id(detail.value))
+        elsif detail.property == 'cf'
+          custom_field_detail(base, detail)
         else
           base.merge(old_value: detail.old_value, new_value: detail.value)
         end
       end
 
-      def status_by_id(raw)
+      def record_ref(klass, raw)
         return nil if raw.blank?
 
-        status = IssueStatus.find_by(id: raw.to_i)
-        status && { id: status.id, name: status.name }
+        record = klass.find_by(id: raw.to_i)
+        record ? { id: record.id, name: record.name } : raw
+      end
+
+      # Labels come from core's own field formats, the way the issue history
+      # page renders them. A deleted field keeps the raw detail.
+      def custom_field_detail(base, detail)
+        field = detail.custom_field
+        detail_hash = base.merge(old_value: detail.old_value, new_value: detail.value)
+        return detail_hash if field.nil?
+
+        detail_hash[:field] = field.name
+        { old_label: detail.old_value, new_label: detail.value }.each do |key, raw|
+          label = custom_field_label(field, raw)
+          detail_hash[key] = label if label && label != raw
+        end
+        detail_hash
+      end
+
+      def custom_field_label(field, raw)
+        return nil if raw.blank?
+
+        field.format.formatted_value(nil, field, raw, nil, false).to_s
       end
 
       def principal_by_id(raw)

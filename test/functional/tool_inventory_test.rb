@@ -461,6 +461,53 @@ class RedmineMcpToolInventoryTest < ActiveSupport::TestCase
     assert_includes Issue.find(1).journals.order(:id).last.details.map(&:prop_key), '1'
   end
 
+  def test_update_issue_returns_the_same_shapes_as_get_issue
+    assignee = Issue.find(1).project.assignable_users.detect { |u| u.id != Issue.find(1).assigned_to_id }
+
+    updated = update_issue_as(User.find(2), 'status' => 'Assigned', 'assigned_to' => assignee.login)
+    assert_not updated[:isError], updated[:content]&.first&.dig(:text)
+    fetched = call_as(User.find(2), 'get_issue', 'id' => 1, 'include_journals' => false)[:result]
+
+    %i[status assigned_to tracker priority category fixed_version].each do |key|
+      assert fetched[:structuredContent][key] == updated[:structuredContent][key],
+             "#{key} differs from get_issue: #{updated[:structuredContent][key].inspect}"
+    end
+    assert_not updated[:structuredContent].key?(:assigned_to_id)
+  end
+
+  def test_get_issue_journal_details_name_the_records_behind_ids
+    result = update_issue_as(User.find(2), 'priority' => 'Urgent', 'fixed_version' => '2.0')
+    assert_not result[:isError], result[:content]&.first&.dig(:text)
+    version = Issue.find(1).fixed_version
+
+    details = journal_details_of_issue_1
+    priority = details.find { |d| d[:name] == 'priority_id' }
+    fixed_version = details.find { |d| d[:name] == 'fixed_version_id' }
+
+    assert_equal 'Urgent', priority[:new_value][:name]
+    assert_equal IssuePriority.find_by(name: 'Urgent').id, priority[:new_value][:id]
+    assert_equal({ id: version.id, name: version.name }, fixed_version[:new_value])
+  end
+
+  def test_get_issue_journal_details_label_custom_field_changes
+    field = enumeration_issue_field
+    maintenance = field.enumerations.find_by(name: 'Maintenance')
+    result = update_issue_as(User.find(2), 'custom_fields' => [{ 'name' => 'Ticket type', 'value' => 'Maintenance' },
+                                                               { 'name' => 'Database', 'value' => 'Oracle' }])
+    assert_not result[:isError], result[:content]&.first&.dig(:text)
+
+    details = journal_details_of_issue_1.select { |d| d[:property] == 'cf' }
+    ticket_type = details.find { |d| d[:name] == field.id.to_s }
+    database = details.find { |d| d[:name] == '1' }
+
+    assert_equal 'Ticket type', ticket_type[:field]
+    assert_equal maintenance.id.to_s, ticket_type[:new_value]
+    assert_equal 'Maintenance', ticket_type[:new_label]
+    assert_equal 'Database', database[:field]
+    assert_equal 'Oracle', database[:new_value]
+    assert_not database.key?(:new_label), 'a plain value needs no separate label'
+  end
+
   def test_update_issue_that_changes_nothing_writes_no_journal
     assert_no_difference 'Journal.count' do
       result = update_issue_as(User.find(2), 'subject' => Issue.find(1).subject)
@@ -528,6 +575,11 @@ class RedmineMcpToolInventoryTest < ActiveSupport::TestCase
   end
 
   private
+
+  def journal_details_of_issue_1
+    result = call_as(User.find(2), 'get_issue', 'id' => 1)[:result]
+    result[:structuredContent][:journals].flat_map { |journal| journal[:details] }
+  end
 
   def update_issue_as(user, arguments)
     User.current = user

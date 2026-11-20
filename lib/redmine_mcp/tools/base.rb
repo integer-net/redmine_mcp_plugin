@@ -315,6 +315,14 @@ module RedmineMcp
 
         { id: principal.id, name: principal.name, type: principal.is_a?(Group) ? 'Group' : 'User' }
       end
+
+      # The current status carries is_closed so a model can tell a closing
+      # status apart without a second catalog lookup.
+      def status_ref(status)
+        return nil if status.nil?
+
+        { id: status.id, name: status.name, is_closed: status.is_closed? }
+      end
     end
   end
 end
