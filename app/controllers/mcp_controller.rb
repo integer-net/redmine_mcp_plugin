@@ -128,6 +128,10 @@ class McpController < ApplicationController
 
     User.current = result.user
     @mcp_auth = { mode: result.mode, scopes: result.scopes }
+    # Core's user_setup logs "Current user" before this runs and cannot see MCP
+    # credentials, so that line always says anonymous here. Only identity and
+    # mode are logged, never a key, token or scope.
+    logger&.info("  MCP user: #{result.user.login} (id=#{result.user.id}) via #{result.mode}")
   end
 
   def verify_protocol_version

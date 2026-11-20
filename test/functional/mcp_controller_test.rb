@@ -53,6 +53,16 @@ class McpControllerTest < Redmine::ControllerTest
     JSON.parse(response.body)
   end
 
+  def capture_controller_log
+    io = StringIO.new
+    original = McpController.logger
+    McpController.logger = ActiveSupport::Logger.new(io)
+    yield
+    io.string
+  ensure
+    McpController.logger = original
+  end
+
   def api_key_headers(user)
     { 'X-Redmine-API-Key' => user.api_key }
   end
@@ -65,6 +75,27 @@ class McpControllerTest < Redmine::ControllerTest
       application_id: application.id, resource_owner_id: user.id, scopes: scopes, expires_in: 7200
     )
     { 'Authorization' => "Bearer #{token.plaintext_token}" }
+  end
+
+  # Core's "Current user" line runs before MCP authentication and always says
+  # anonymous on this endpoint, so the plugin logs who was authenticated.
+  def test_authenticated_user_and_mode_are_logged_without_credentials
+    user = User.find(2)
+    log = capture_controller_log do
+      post_mcp rpc('tools/list'), api_key_headers(user)
+      post_mcp rpc('tools/list'), oauth_headers(user, scopes: 'view_issues')
+    end
+
+    assert_match(/MCP user: #{user.login} \(id=#{user.id}\) via api_key/, log)
+    assert_match(/MCP user: #{user.login} \(id=#{user.id}\) via oauth2/, log)
+    assert_not_includes log, user.api_key
+    assert_not_includes log, 'Bearer'
+  end
+
+  def test_nothing_is_logged_as_authenticated_user_when_authentication_fails
+    log = capture_controller_log { post_mcp rpc('tools/list') }
+
+    assert_no_match(/MCP user:/, log)
   end
 
   def test_endpoint_is_off_until_enabled
