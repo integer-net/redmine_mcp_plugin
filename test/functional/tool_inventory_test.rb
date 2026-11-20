@@ -447,6 +447,45 @@ class RedmineMcpToolInventoryTest < ActiveSupport::TestCase
     assert_includes journal.details.map(&:prop_key), 'subject'
   end
 
+  def test_update_issue_without_notes_still_writes_a_journal_with_the_change
+    assert_difference 'Journal.count', 1 do
+      result = update_issue_as(User.find(2), 'status' => 'Assigned')
+
+      assert_not result[:isError], result[:content]&.first&.dig(:text)
+    end
+    assert_includes Issue.find(1).journals.order(:id).last.details.map(&:prop_key), 'status_id'
+
+    assert_difference 'Journal.count', 1 do
+      update_issue_as(User.find(2), 'custom_fields' => [{ 'name' => 'Database', 'value' => 'Oracle' }])
+    end
+    assert_includes Issue.find(1).journals.order(:id).last.details.map(&:prop_key), '1'
+  end
+
+  def test_update_issue_that_changes_nothing_writes_no_journal
+    assert_no_difference 'Journal.count' do
+      result = update_issue_as(User.find(2), 'subject' => Issue.find(1).subject)
+
+      assert_not result[:isError], result[:content]&.first&.dig(:text)
+    end
+  end
+
+  # Core adds a note on update only with add_issue_notes (Issue#notes_addable?),
+  # not with edit_issues alone.
+  def test_update_issue_refuses_notes_for_a_role_without_add_issue_notes
+    Role.find(1).remove_permission!(:add_issue_notes)
+
+    assert_no_difference 'Journal.count' do
+      result = update_issue_as(User.find(2), 'subject' => 'Should not stick', 'notes' => 'sneaky note')
+
+      assert result[:isError]
+      assert_match(/permission/, result[:content].first[:text])
+    end
+    assert_not_equal 'Should not stick', Issue.find(1).subject
+
+    result = update_issue_as(User.find(2), 'subject' => 'Field change without note')
+    assert_not result[:isError], result[:content]&.first&.dig(:text)
+  end
+
   def test_update_issue_lists_the_allowed_statuses_when_the_workflow_refuses_one
     WorkflowTransition.where(role_id: 1, new_status_id: IssueStatus.find_by(name: 'Closed').id).delete_all
 

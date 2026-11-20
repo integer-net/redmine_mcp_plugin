@@ -459,6 +459,19 @@ class McpControllerTest < Redmine::ControllerTest
     assert_not_includes json_body['result']['tools'].pluck('name'), 'list_issue_custom_fields'
   end
 
+  def test_update_issue_challenge_adds_the_notes_scope_only_when_notes_are_sent
+    enable_mcp('read_only' => '0')
+    oauth = oauth_headers(User.find(2), scopes: 'view_issues')
+    challenge = lambda do |arguments|
+      post_mcp rpc('tools/call', { 'name' => 'update_issue', 'arguments' => arguments }), oauth
+      assert_response :forbidden
+      response.headers['WWW-Authenticate'][/scope="([^"]*)"/, 1]
+    end
+
+    assert_equal 'edit_issues', challenge.call('id' => 1, 'subject' => 'x')
+    assert_equal 'edit_issues add_issue_notes', challenge.call('id' => 1, 'notes' => 'x')
+  end
+
   def test_issue_creation_challenge_includes_all_same_tier_correlated_scopes
     enable_mcp('read_only' => '0')
     oauth = oauth_headers(User.find(2), scopes: 'view_issues')
@@ -937,7 +950,7 @@ class McpControllerTest < Redmine::ControllerTest
                                  'arguments' => { 'id' => 1, 'notes' => 'Private update', 'private' => true } }),
              oauth_headers(User.find(2), scopes: 'edit_issues')
     assert_response :forbidden
-    assert_includes response.headers['WWW-Authenticate'], 'scope="edit_issues set_notes_private"'
+    assert_includes response.headers['WWW-Authenticate'], 'scope="edit_issues add_issue_notes set_notes_private"'
     assert_not Journal.exists?(notes: 'Private update')
   end
 

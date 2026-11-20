@@ -56,6 +56,7 @@ module RedmineMcp
       def self.required_permissions(arguments = {}, user: User.current)
         permissions = super
         permissions += %i[manage_subtasks] if arguments.key?('parent_issue_id')
+        permissions += %i[add_issue_notes] if arguments['notes'].present?
         permissions += %i[set_notes_private] if arguments['notes'].present? && arguments['private'] == true
         permissions
       end
@@ -67,6 +68,14 @@ module RedmineMcp
         raise ToolError, "No visible issue with id #{arguments['id'].inspect}" if issue.nil?
 
         authorize!(:edit_issues, issue.project)
+        # init_journal below skips core's check (Issue#notes_addable?), which
+        # asks for add_issue_notes rather than edit_issues.
+        authorize!(:add_issue_notes, issue.project) if arguments.key?('notes')
+
+        # Without a journal Issue#save records no history and sends no
+        # notifications. It snapshots the attributes it diffs, so it must start
+        # before the first assignment; core drops a journal that ends up empty.
+        issue.init_journal(user)
 
         attributes = {}
 
@@ -136,7 +145,7 @@ module RedmineMcp
           notes = arguments['notes'].to_s
           raise ToolError, 'notes must not be empty' if notes.strip.empty?
 
-          issue.init_journal(user, notes)
+          issue.current_journal.notes = notes
 
           if arguments['private']
             authorize!(:set_notes_private, issue.project)
